@@ -1,3 +1,5 @@
+IT BROKE IMMEDIATELY LOL – WILL BE UPDATED WHEN IT'S WORKING AND STABLE AGAIN
+
 Violentmoney userscript to prevent "enhance this slide" popup on Google Slides on Chrome.
 
 Google Slides' interminable genAI popup was making me want to return to the woods and eat nothing but berries and wild mushrooms. 
