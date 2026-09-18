@@ -1,0 +1,72 @@
+// ==UserScript==
+// @name         Google Slides - Auto-Dismiss "Enhance/Edit Slide" Nudge
+// @namespace    violentmonkey-scripts
+// @version      11.0
+// @description  Dismisses AI nudges, forcibly removes empty banner containers, and resizes slide workspace.
+// @match        https://docs.google.com/presentation/*
+// @grant        none
+// @run-at       document-start
+// ==/UserScript==
+
+(function () {
+  'use strict';
+
+  // Inject CSS rules to immediately collapse any reserved banner padding/margins
+  const style = document.createElement('style');
+  style.textContent = `
+    [class*="GenerativeAiNudge"],
+    [class*="appsElementsGenerativeAiNudge"],
+    .docs-butterbar-container,
+    .docs-material-banner-container {
+      display: none !important;
+      height: 0 !important;
+      min-height: 0 !important;
+      max-height: 0 !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      border: none !important;
+      overflow: hidden !important;
+    }
+  `;
+  (document.head || document.documentElement).appendChild(style);
+
+  function removeNudgeAndResize() {
+    const selector = '.appsElementsGenerativeAiNudgeButtonNudgeDismissButton, button[aria-label="Close Enhance this slide"]';
+    const buttons = document.querySelectorAll(selector);
+
+    buttons.forEach((btn) => {
+      // Direct click invocation to notify internal state
+      if (typeof btn.click === 'function') {
+        try {
+          btn.click();
+        } catch (e) {}
+      }
+
+      // Identify the topmost outer banner element reserving canvas height
+      let container = btn.closest(
+        '[class*="Nudge"], [class*="nudge"], [class*="GenerativeAi"], .docs-material-banner-container, .docs-butterbar-container'
+      );
+
+      if (!container) {
+        container = btn.parentElement?.parentElement?.parentElement || btn.parentElement;
+      }
+
+      // Completely remove the wrapper from the DOM
+      if (container && container.parentNode) {
+        container.remove();
+      }
+
+      // Trigger global resize event to force Google Slides canvas engine to recalculate workspace height
+      window.dispatchEvent(new Event('resize'));
+    });
+  }
+
+  // Watch for dynamic DOM additions
+  const observer = new MutationObserver(removeNudgeAndResize);
+  observer.observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+  });
+
+  setInterval(removeNudgeAndResize, 300);
+})();
