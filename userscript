@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Google Slides - Auto-Dismiss & Canvas Layout Fix
+// @name         Google Slides - Auto-Dismiss "Enhance this slide" nudge
 // @namespace    violentmonkey-scripts
-// @version      22.0
-// @description  Hides the "Enhance this slide" AI nudge (via two independent selectors) and overrides Slides canvas layout constraints. Includes a lightweight tripwire that warns + self-heals if Google ever changes the markup.
+// @version      2.1
+// @description  Hides the AI nudge instantly via CSS, then programmatically clicks its own built-in "Close" button so Slides runs its native dismiss logic (and correctly reclaims the reserved canvas space) instead of us patching container sizes ourselves.
 // @match        https://docs.google.com/presentation/*
 // @grant        GM_addStyle
 // @run-at       document-start
@@ -11,66 +11,42 @@
 (function () {
   'use strict';
 
-  // Two independent signals for the nudge: its class family, and its
-  // aria-label. If Google renames one, the other likely still catches it.
-  const NUDGE_SELECTOR =
-    '[class*="appsElementsGenerativeAiNudge"], [aria-label="Enhance this slide"]';
+  const NUDGE_SELECTOR = [
+    '#canvas-nudge-surface-soy-container',
+    '[id^="canvas-nudge-surface"]',
+    '[class*="CanvasNudgeSurface"]',
+    '[class*="appsElementsGenerativeAiNudge"]',
+    '[aria-label="Enhance this slide"]',
+  ].join(', ');
 
-  // CSS alone reliably hides matches - native, zero JS cost per element.
-  GM_addStyle(`
-    .docs-butterbar-container,
-    .docs-material-banner-container,
-    ${NUDGE_SELECTOR} {
-      display: none !important;
-      height: 0 !important;
-      min-height: 0 !important;
-    }
+  // Hide immediately so there's never a visible flash. GM_addStyle doesn't
+  // depend on document.body, so this part is safe to run at document-start.
+  GM_addStyle(`${NUDGE_SELECTOR} { display: none !important; }`);
 
-    #workspace-container,
-    .docs-editor-container,
-    .docs-editor {
-      bottom: 0 !important;
-      height: auto !important;
-    }
-  `);
+  const CLOSE_SELECTOR = '[aria-label="Close Enhance this slide"]';
+  const dismissed = new WeakSet();
 
-  // Tripwire: every few seconds (not on every DOM mutation), check whether
-  // anything matching the nudge selectors is still actually visible. This
-  // only fires if BOTH selectors above have stopped matching a real nudge
-  // element (i.e. Google changed the markup) - it force-removes it and
-  // warns loudly, so a future break is obvious instead of silent.
-  setInterval(() => {
-    document.querySelectorAll(NUDGE_SELECTOR).forEach((el) => {
-      if (getComputedStyle(el).display !== 'none') {
-        console.warn(
-          '[AI-nudge-fix] CSS rule no longer hiding this element - selectors may need updating:',
-          el
-        );
-        el.remove();
-      }
+  function dismissNudges() {
+    document.querySelectorAll(CLOSE_SELECTOR).forEach((btn) => {
+      if (dismissed.has(btn)) return;
+      dismissed.add(btn);
+      btn.click();
+      console.log('[Slides nudge fix] dismissed nudge via its own Close button:', btn);
     });
-  }, 5000);
-
-  // Slides needs a `resize` event to recompute its SVG canvas after our CSS
-  // changes the workspace container's box size. A ResizeObserver scoped to
-  // that one element only fires on real size changes - far cheaper than a
-  // subtree MutationObserver reacting to every DOM mutation in the editor.
-  function watchResize() {
-    const target = document.querySelector('#workspace-container, .docs-editor-container');
-    if (!target) {
-      setTimeout(watchResize, 250); // container not mounted yet, try again shortly
-      return;
-    }
-    let raf;
-    new ResizeObserver(() => {
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
-    }).observe(target);
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', watchResize);
+  // observer.observe requires document.body to exist. At document-start it
+  // may not yet - wait for DOMContentLoaded if so, instead of crashing.
+  function start() {
+    const observer = new MutationObserver(dismissNudges);
+    observer.observe(document.body, { childList: true, subtree: true });
+    setInterval(dismissNudges, 1000);
+    dismissNudges();
+  }
+
+  if (document.body) {
+    start();
   } else {
-    watchResize();
+    document.addEventListener('DOMContentLoaded', start);
   }
 })();
