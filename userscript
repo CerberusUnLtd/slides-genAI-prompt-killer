@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Google Slides - Auto-Dismiss "Enhance this slide" nudge
 // @namespace    violentmonkey-scripts
-// @version      2.1
-// @description  Hides the AI nudge instantly via CSS, then programmatically clicks its own built-in "Close" button so Slides runs its native dismiss logic (and correctly reclaims the reserved canvas space) instead of us patching container sizes ourselves.
+// @version      2.3
+// @description  Hides the AI nudge instantly via CSS, then programmatically clicks its own built-in dismiss button so Slides runs its native dismiss logic. Finds the button by class/structure instead of exact label wording.
 // @match        https://docs.google.com/presentation/*
 // @grant        GM_addStyle
 // @run-at       document-start
@@ -19,24 +19,43 @@
     '[aria-label="Enhance this slide"]',
   ].join(', ');
 
-  // Hide immediately so there's never a visible flash. GM_addStyle doesn't
-  // depend on document.body, so this part is safe to run at document-start.
   GM_addStyle(`${NUDGE_SELECTOR} { display: none !important; }`);
 
-  const CLOSE_SELECTOR = '[aria-label="Close Enhance this slide"]';
-  const dismissed = new WeakSet();
+  // Match the dismiss button by class/structure first (stable), with a
+  // scoped aria-label fallback. Scoping to the nudge containers avoids
+  // hitting unrelated "Close" buttons like "Close side sheet".
+  const CLOSE_SELECTOR = [
+    'button[class*="NudgeDismissButton"]',
+    '[class*="appsElementsGenerativeAiNudge"] [aria-label^="Close"]',
+    '[id^="canvas-nudge-surface"] [aria-label^="Close"]',
+  ].join(', ');
+
+  const lastClicked = new WeakMap();
+  const COOLDOWN_MS = 2000;
+  let lastWarn = 0;
 
   function dismissNudges() {
-    document.querySelectorAll(CLOSE_SELECTOR).forEach((btn) => {
-      if (dismissed.has(btn)) return;
-      dismissed.add(btn);
-      btn.click();
-      console.log('[Slides nudge fix] dismissed nudge via its own Close button:', btn);
+    const now = Date.now();
+    const buttons = document.querySelectorAll(CLOSE_SELECTOR);
+
+    buttons.forEach((btn) => {
+      const last = lastClicked.get(btn) || 0;
+      if (now - last > COOLDOWN_MS) {
+        lastClicked.set(btn, now);
+        btn.click();
+        console.log('[Slides nudge fix] dismissed nudge via its own Close button:', btn);
+      }
     });
+
+    // Tripwire: nudge present but no dismiss button found means the
+    // markup probably changed again. Warn at most every 30s.
+    if (!buttons.length && now - lastWarn > 30000 &&
+        document.querySelector('[class*="appsElementsGenerativeAiNudge"]')) {
+      lastWarn = now;
+      console.warn('[Slides nudge fix] nudge present but no dismiss button matched - selectors may need updating.');
+    }
   }
 
-  // observer.observe requires document.body to exist. At document-start it
-  // may not yet - wait for DOMContentLoaded if so, instead of crashing.
   function start() {
     const observer = new MutationObserver(dismissNudges);
     observer.observe(document.body, { childList: true, subtree: true });
